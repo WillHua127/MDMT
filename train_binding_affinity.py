@@ -64,8 +64,9 @@ def train_routine(epoch, device):
                 
         elif graph.dataset[0] in {'qm9'}:
             pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y
-            e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
-            y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
+            #e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
+            #y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
+            y_hat = model(pos, atoms, nnode, task='qm9')
             loss = [mse_loss(y_hat[i].squeeze(1), y[i]) for i in range(y.shape[0])]
             loss = sum(loss)
             loss = qm9_trn_wg * loss
@@ -228,7 +229,9 @@ def val_routine(epoch, device):
             with torch.no_grad():
                 pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y
                 e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
-                y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
+                #e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
+                #y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
+                y_hat = model(pos, atoms, nnode, task='qm9')
 
                 y_true_qm9_dip.append(y[0].item())
                 y_pred_qm9_dip.append(y_hat[0].item())
@@ -501,8 +504,9 @@ def test_routine(epoch, device):
         elif graph.dataset[0] in {'qm9'}:
             with torch.no_grad():
                 pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y
-                e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
-                y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
+                #e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
+                #y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
+                y_hat = model(pos, atoms, nnode, task='qm9')
 
                 y_true_qm9_dip.append(y[0].item())
                 y_pred_qm9_dip.append(y_hat[0].item())
