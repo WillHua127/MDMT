@@ -5,9 +5,10 @@ import networkx as nx
 import argparse
 import os
 import itertools
-from torch_geometric import loader
 from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
+
+from torch_geometric.loader import DataLoader
 
 
 from hot_pytorch.batch.sparse import make_batch
@@ -40,10 +41,15 @@ def train_routine(epoch, device):
     #for (g, edge_vec, nnode, y) in train_list:
     for idx, graph in enumerate(tqdm(trn_loader)):
         optimizer.zero_grad()
-        
-        if graph.dataset[0] in {'md17'}:
-            pos, atoms, nnode, y, dy, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y, graph.dy, graph.subdata[0]
-            y_hat, dy_hat = model(pos, atoms, nnode, task='md17', subname=subname)
+        dataset_label = graph.dataset[0]
+        if isinstance(dataset_label, list):
+            dataset_label = dataset_label[0]
+            
+        if dataset_label in {'md17'}:
+            pos, atoms, nnode, y, dy, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y, graph.dy, graph.subdata[0][0]
+            batch = graph.batch
+            y_hat, dy_hat = model(pos, atoms, nnode, task='md17', subname=subname, batch=batch)
+
             loss_y = mse_loss(y_hat, y)
             loss_dy = mse_loss(dy_hat, dy)
             loss = 0.2*loss_y + 0.8*loss_dy
@@ -62,20 +68,24 @@ def train_routine(epoch, device):
             elif subname in {'uracil'}:
                 loss = ura_trn_wg * loss
                 
-        elif graph.dataset[0] in {'qm9'}:
-            pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y
+        elif dataset_label in {'qm9'}:
+            pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y.squeeze().T
+            batch = graph.batch
             #e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
             #y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
-            y_hat = model(pos, atoms, nnode, task='qm9')
+            y_hat = model(pos, atoms, nnode, task='qm9', batch=batch)
+            
             loss = [mse_loss(y_hat[i].squeeze(1), y[i]) for i in range(y.shape[0])]
             loss = sum(loss)
             loss = qm9_trn_wg * loss
-        elif graph.dataset[0] in {'chemb'}:
+            
+        elif dataset_label in {'chemb'}:
             pos, atoms, nnode, y, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y.float(), graph.subdata[0]
             n_fea, e_id, e_fea, e_we, e_vec = graph.x, graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
             y_hat = model(pos, atoms, nnode, task='chemb', subname=subname, n_fea=n_fea, e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
             y = y.unsqueeze(0)
             y_hat = y_hat.unsqueeze(0)
+
             # whether y is non-null or not.
             is_valid = y**2 > 0
             # loss matrix
@@ -94,10 +104,11 @@ def train_routine(epoch, device):
             elif subname in {'chemb100'}:
                 loss = ((valid_task_count_list > 0).sum()/chemb100_trn_wg) * loss
 
-        elif graph.dataset[0] in {'pdb'}:
+        elif dataset_label in {'pdb'}:
             n_fea, e_id, e_fea, e_we, e_vec = graph.x, graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
             pos, atoms, nnode, y = graph.pos, graph.atom, graph.pos.shape[0], graph.y
             y_hat = model(pos, atoms, nnode, task='pdb', n_fea=n_fea, e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
+
             loss = F.l1_loss(y_hat, y.squeeze(), reduction='sum')#mse_loss(y_hat, y.squeeze())
             loss = pdb_trn_wg * loss
         
@@ -185,80 +196,87 @@ def val_routine(epoch, device):
     
 
     for idx, graph in enumerate(tqdm(val_loader)):
-        if graph.dataset[0] in {'md17'}:
-            pos, atoms, nnode, y, dy, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y, graph.dy, graph.subdata[0]
-            y_hat, dy_hat = model(pos, atoms, nnode, task='md17', subname=subname)
+        
+        
+        dataset_label = graph.dataset[0]
+        if isinstance(dataset_label, list):
+            dataset_label = dataset_label[0]
+            
+        if dataset_label in {'md17'}:
+            pos, atoms, nnode, y, dy, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y, graph.dy, graph.subdata[0][0]
+            batch = graph.batch
+            y_hat, dy_hat = model(pos, atoms, nnode, task='md17', subname=subname, batch=batch)
 
             if subname in {'aspirin'}:
-                y_true_md17_asp_e.append(y.item())
-                y_pred_md17_asp_e.append(y_hat.item())
+                y_true_md17_asp_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_asp_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_asp_f.append(dy.detach().numpy())
                 y_pred_md17_asp_f.append(dy_hat.detach().numpy())
             elif subname in {'ethanol'}:
-                y_true_md17_eth_e.append(y.item())
-                y_pred_md17_eth_e.append(y_hat.item())
+                y_true_md17_eth_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_eth_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_eth_f.append(dy.detach().numpy())
                 y_pred_md17_eth_f.append(dy_hat.detach().numpy())
             elif subname in {'malonaldehyde'}:
-                y_true_md17_mal_e.append(y.item())
-                y_pred_md17_mal_e.append(y_hat.item())
+                y_true_md17_mal_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_mal_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_mal_f.append(dy.detach().numpy())
                 y_pred_md17_mal_f.append(dy_hat.detach().numpy())
             elif subname in {'naphthalene'}:
-                y_true_md17_nap_e.append(y.item())
-                y_pred_md17_nap_e.append(y_hat.item())
+                y_true_md17_nap_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_nap_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_nap_f.append(dy.detach().numpy())
                 y_pred_md17_nap_f.append(dy_hat.detach().numpy())
             elif subname in {'salicylic_acid'}:
-                y_true_md17_sal_e.append(y.item())
-                y_pred_md17_sal_e.append(y_hat.item())
+                y_true_md17_sal_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_sal_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_sal_f.append(dy.detach().numpy())
                 y_pred_md17_sal_f.append(dy_hat.detach().numpy())
             elif subname in {'toluene'}:
-                y_true_md17_tol_e.append(y.item())
-                y_pred_md17_tol_e.append(y_hat.item())
+                y_true_md17_tol_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_tol_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_tol_f.append(dy.detach().numpy())
                 y_pred_md17_tol_f.append(dy_hat.detach().numpy())
             elif subname in {'uracil'}:
-                y_true_md17_ura_e.append(y.item())
-                y_pred_md17_ura_e.append(y_hat.item())
+                y_true_md17_ura_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_ura_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_ura_f.append(dy.detach().numpy())
                 y_pred_md17_ura_f.append(dy_hat.detach().numpy())
 
-        elif graph.dataset[0] in {'qm9'}:
+        elif dataset_label in {'qm9'}:
             with torch.no_grad():
-                pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y
-                e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
+                pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y.T
+                batch = graph.batch
                 #e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
                 #y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
-                y_hat = model(pos, atoms, nnode, task='qm9')
+                y_hat = model(pos, atoms, nnode, task='qm9', batch=batch)
 
-                y_true_qm9_dip.append(y[0].item())
-                y_pred_qm9_dip.append(y_hat[0].item())
-                y_true_qm9_pol.append(y[1].item())
-                y_pred_qm9_pol.append(y_hat[1].item())
-                y_true_qm9_hom.append(y[2].item())
-                y_pred_qm9_hom.append(y_hat[2].item())
-                y_true_qm9_lum.append(y[3].item())
-                y_pred_qm9_lum.append(y_hat[3].item())
-                y_true_qm9_dlt.append(y[4].item())
-                y_pred_qm9_dlt.append(y_hat[4].item())
-                y_true_qm9_ele.append(y[5].item())
-                y_pred_qm9_ele.append(y_hat[5].item())
-                y_true_qm9_zpv.append(y[6].item())
-                y_pred_qm9_zpv.append(y_hat[6].item())
-                y_true_qm9_eu0.append(y[7].item())
-                y_pred_qm9_eu0.append(y_hat[7].item())
-                y_true_qm9_eu1.append(y[8].item())
-                y_pred_qm9_eu1.append(y_hat[8].item())
-                y_true_qm9_ent.append(y[9].item())
-                y_pred_qm9_ent.append(y_hat[9].item())
-                y_true_qm9_efr.append(y[10].item())
-                y_pred_qm9_efr.append(y_hat[10].item())
-                y_true_qm9_hea.append(y[11].item())
-                y_pred_qm9_hea.append(y_hat[11].item())
+                y_true_qm9_dip.append(y[0].detach().numpy())
+                y_pred_qm9_dip.append(y_hat[0].squeeze().detach().numpy())
+                y_true_qm9_pol.append(y[1].detach().numpy())
+                y_pred_qm9_pol.append(y_hat[1].squeeze().detach().numpy())
+                y_true_qm9_hom.append(y[2].detach().numpy())
+                y_pred_qm9_hom.append(y_hat[2].squeeze().detach().numpy())
+                y_true_qm9_lum.append(y[3].detach().numpy())
+                y_pred_qm9_lum.append(y_hat[3].squeeze().detach().numpy())
+                y_true_qm9_dlt.append(y[4].detach().numpy())
+                y_pred_qm9_dlt.append(y_hat[4].squeeze().detach().numpy())
+                y_true_qm9_ele.append(y[5].detach().numpy())
+                y_pred_qm9_ele.append(y_hat[5].squeeze().detach().numpy())
+                y_true_qm9_zpv.append(y[6].detach().numpy())
+                y_pred_qm9_zpv.append(y_hat[6].squeeze().detach().numpy())
+                y_true_qm9_eu0.append(y[7].detach().numpy())
+                y_pred_qm9_eu0.append(y_hat[7].squeeze().detach().numpy())
+                y_true_qm9_eu1.append(y[8].detach().numpy())
+                y_pred_qm9_eu1.append(y_hat[8].squeeze().detach().numpy())
+                y_true_qm9_ent.append(y[9].detach().numpy())
+                y_pred_qm9_ent.append(y_hat[9].squeeze().detach().numpy())
+                y_true_qm9_efr.append(y[10].detach().numpy())
+                y_pred_qm9_efr.append(y_hat[10].squeeze().detach().numpy())
+                y_true_qm9_hea.append(y[11].detach().numpy())
+                y_pred_qm9_hea.append(y_hat[11].squeeze().detach().numpy())
 
-        elif graph.dataset[0] in {'chemb'}:
+        elif dataset_label in {'chemb'}:
             with torch.no_grad():
                 pos, atoms, nnode, y, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y.float(), graph.subdata[0]
                 n_fea, e_id, e_fea, e_we, e_vec = graph.x, graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
@@ -276,7 +294,7 @@ def val_routine(epoch, device):
                     y_true_chemb100.append(y.detach().numpy())
                     y_pred_chemb100.append(y_hat.detach().numpy())
 
-        elif graph.dataset[0] in {'pdb'}:
+        elif dataset_label in {'pdb'}:
             with torch.no_grad():
                 n_fea, e_id, e_fea, e_we, e_vec = graph.x, graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
                 pos, atoms, nnode, y = graph.pos, graph.atom, graph.pos.shape[0], graph.y
@@ -287,57 +305,57 @@ def val_routine(epoch, device):
         
         
         
-    y_true_qm9_dip = np.array(y_true_qm9_dip)
-    y_pred_qm9_dip = np.array(y_pred_qm9_dip)
-    y_true_qm9_pol = np.array(y_true_qm9_pol)
-    y_pred_qm9_pol = np.array(y_pred_qm9_pol)
-    y_true_qm9_hom = np.array(y_true_qm9_hom)
-    y_pred_qm9_hom = np.array(y_pred_qm9_hom)
-    y_true_qm9_lum = np.array(y_true_qm9_lum)
-    y_pred_qm9_lum = np.array(y_pred_qm9_lum)
-    y_true_qm9_dlt = np.array(y_true_qm9_dlt)
-    y_pred_qm9_dlt = np.array(y_pred_qm9_dlt)
-    y_true_qm9_ele = np.array(y_true_qm9_ele)
-    y_pred_qm9_ele = np.array(y_pred_qm9_ele)
-    y_true_qm9_zpv = np.array(y_true_qm9_zpv)
-    y_pred_qm9_zpv = np.array(y_pred_qm9_zpv)
-    y_true_qm9_eu0 = np.array(y_true_qm9_eu0)
-    y_pred_qm9_eu0 = np.array(y_pred_qm9_eu0)
-    y_true_qm9_eu1 = np.array(y_true_qm9_eu1)
-    y_pred_qm9_eu1 = np.array(y_pred_qm9_eu1)
-    y_true_qm9_ent = np.array(y_true_qm9_ent)
-    y_pred_qm9_ent = np.array(y_pred_qm9_ent)
-    y_true_qm9_efr = np.array(y_true_qm9_efr)
-    y_pred_qm9_efr = np.array(y_pred_qm9_efr)
-    y_true_qm9_hea = np.array(y_true_qm9_hea)
-    y_pred_qm9_hea = np.array(y_pred_qm9_hea)
+    y_true_qm9_dip = np.concatenate(y_true_qm9_dip, axis=0)#np.array(y_true_qm9_dip)
+    y_pred_qm9_dip = np.concatenate(y_pred_qm9_dip, axis=0)#np.array(y_pred_qm9_dip)
+    y_true_qm9_pol = np.concatenate(y_true_qm9_pol, axis=0)#np.array(y_true_qm9_pol)
+    y_pred_qm9_pol = np.concatenate(y_pred_qm9_pol, axis=0)#np.array(y_pred_qm9_pol)
+    y_true_qm9_hom = np.concatenate(y_true_qm9_hom, axis=0)#np.array(y_true_qm9_hom)
+    y_pred_qm9_hom = np.concatenate(y_pred_qm9_hom, axis=0)#np.array(y_pred_qm9_hom)
+    y_true_qm9_lum = np.concatenate(y_true_qm9_lum, axis=0)#np.array(y_true_qm9_lum)
+    y_pred_qm9_lum = np.concatenate(y_pred_qm9_lum, axis=0)#np.array(y_pred_qm9_lum)
+    y_true_qm9_dlt = np.concatenate(y_true_qm9_dlt, axis=0)#np.array(y_true_qm9_dlt)
+    y_pred_qm9_dlt = np.concatenate(y_pred_qm9_dlt, axis=0)#np.array(y_pred_qm9_dlt)
+    y_true_qm9_ele = np.concatenate(y_true_qm9_ele, axis=0)#np.array(y_true_qm9_ele)
+    y_pred_qm9_ele = np.concatenate(y_pred_qm9_ele, axis=0)#np.array(y_pred_qm9_ele)
+    y_true_qm9_zpv = np.concatenate(y_true_qm9_zpv, axis=0)#np.array(y_true_qm9_zpv)
+    y_pred_qm9_zpv = np.concatenate(y_pred_qm9_zpv, axis=0)#np.array(y_pred_qm9_zpv)
+    y_true_qm9_eu0 = np.concatenate(y_true_qm9_eu0, axis=0)#np.array(y_true_qm9_eu0)
+    y_pred_qm9_eu0 = np.concatenate(y_pred_qm9_eu0, axis=0)#np.array(y_pred_qm9_eu0)
+    y_true_qm9_eu1 = np.concatenate(y_true_qm9_eu1, axis=0)#np.array(y_true_qm9_eu1)
+    y_pred_qm9_eu1 = np.concatenate(y_pred_qm9_eu1, axis=0)#np.array(y_pred_qm9_eu1)
+    y_true_qm9_ent = np.concatenate(y_true_qm9_ent, axis=0)#np.array(y_true_qm9_ent)
+    y_pred_qm9_ent = np.concatenate(y_pred_qm9_ent, axis=0)#np.array(y_pred_qm9_ent)
+    y_true_qm9_efr = np.concatenate(y_true_qm9_efr, axis=0)#np.array(y_true_qm9_efr)
+    y_pred_qm9_efr = np.concatenate(y_pred_qm9_efr, axis=0)#np.array(y_pred_qm9_efr)
+    y_true_qm9_hea = np.concatenate(y_true_qm9_hea, axis=0)#np.array(y_true_qm9_hea)
+    y_pred_qm9_hea = np.concatenate(y_pred_qm9_hea, axis=0)#np.array(y_pred_qm9_hea)
     
-    y_true_md17_asp_e = np.array(y_true_md17_asp_e)
-    y_pred_md17_asp_e = np.array(y_pred_md17_asp_e)
+    y_true_md17_asp_e = np.concatenate(y_true_md17_asp_e, axis=0)
+    y_pred_md17_asp_e = np.concatenate(y_pred_md17_asp_e, axis=0)
     y_true_md17_asp_f = np.concatenate(y_true_md17_asp_f, axis=0)
     y_pred_md17_asp_f = np.concatenate(y_pred_md17_asp_f, axis=0)
-    y_true_md17_eth_e = np.array(y_true_md17_eth_e)
-    y_pred_md17_eth_e = np.array(y_pred_md17_eth_e)
+    y_true_md17_eth_e = np.concatenate(y_true_md17_eth_e, axis=0)
+    y_pred_md17_eth_e = np.concatenate(y_pred_md17_eth_e, axis=0)
     y_true_md17_eth_f = np.concatenate(y_true_md17_eth_f, axis=0)
     y_pred_md17_eth_f = np.concatenate(y_pred_md17_eth_f, axis=0)
-    y_true_md17_mal_e = np.array(y_true_md17_mal_e)
-    y_pred_md17_mal_e = np.array(y_pred_md17_mal_e)
+    y_true_md17_mal_e = np.concatenate(y_true_md17_mal_e, axis=0)
+    y_pred_md17_mal_e = np.concatenate(y_pred_md17_mal_e, axis=0)
     y_true_md17_mal_f = np.concatenate(y_true_md17_mal_f, axis=0)
     y_pred_md17_mal_f = np.concatenate(y_pred_md17_mal_f, axis=0)
-    y_true_md17_nap_e = np.array(y_true_md17_nap_e)
-    y_pred_md17_nap_e = np.array(y_pred_md17_nap_e)
+    y_true_md17_nap_e = np.concatenate(y_true_md17_nap_e, axis=0)
+    y_pred_md17_nap_e = np.concatenate(y_pred_md17_nap_e, axis=0)
     y_true_md17_nap_f = np.concatenate(y_true_md17_nap_f, axis=0)
     y_pred_md17_nap_f = np.concatenate(y_pred_md17_nap_f, axis=0)
-    y_true_md17_sal_e = np.array(y_true_md17_sal_e)
-    y_pred_md17_sal_e = np.array(y_pred_md17_sal_e)
+    y_true_md17_sal_e = np.concatenate(y_true_md17_sal_e, axis=0)
+    y_pred_md17_sal_e = np.concatenate(y_pred_md17_sal_e, axis=0)
     y_true_md17_sal_f = np.concatenate(y_true_md17_sal_f, axis=0)
     y_pred_md17_sal_f = np.concatenate(y_pred_md17_sal_f, axis=0)
-    y_true_md17_tol_e = np.array(y_true_md17_tol_e)
-    y_pred_md17_tol_e = np.array(y_pred_md17_tol_e)
+    y_true_md17_tol_e = np.concatenate(y_true_md17_tol_e, axis=0)
+    y_pred_md17_tol_e = np.concatenate(y_pred_md17_tol_e, axis=0)
     y_true_md17_tol_f = np.concatenate(y_true_md17_tol_f, axis=0)
     y_pred_md17_tol_f = np.concatenate(y_pred_md17_tol_f, axis=0)
-    y_true_md17_ura_e = np.array(y_true_md17_ura_e)
-    y_pred_md17_ura_e = np.array(y_pred_md17_ura_e)
+    y_true_md17_ura_e = np.concatenate(y_true_md17_ura_e, axis=0)
+    y_pred_md17_ura_e = np.concatenate(y_pred_md17_ura_e, axis=0)
     y_true_md17_ura_f = np.concatenate(y_true_md17_ura_f, axis=0)
     y_pred_md17_ura_f = np.concatenate(y_pred_md17_ura_f, axis=0)
     
@@ -347,7 +365,7 @@ def val_routine(epoch, device):
     y_pred_chemb50 = np.concatenate(y_pred_chemb50, axis=0)
     y_true_chemb100 = np.concatenate(y_true_chemb100, axis=0)
     y_pred_chemb100 = np.concatenate(y_pred_chemb100, axis=0)
-    
+                                    
     y_true_pdb = np.array(y_true_pdb)
     y_pred_pdb = np.array(y_pred_pdb)
     
@@ -388,6 +406,7 @@ def val_routine(epoch, device):
     mae_pdb = mae(y_true_pdb, y_pred_pdb)
     sd_pdb = sd(y_true_pdb, y_pred_pdb)
     pearson_pdb = pearson(y_true_pdb, y_pred_pdb)
+    
     return l1_qm9_dip, l1_qm9_pol, l1_qm9_hom, l1_qm9_lum, l1_qm9_dlt, l1_qm9_ele, l1_qm9_zpv, l1_qm9_eu0, l1_qm9_eu1, l1_qm9_ent, l1_qm9_efr, l1_qm9_hea, l1_md17_asp_e, l1_md17_asp_f, l1_md17_eth_e, l1_md17_eth_f, l1_md17_mal_e, l1_md17_mal_f, l1_md17_nap_e, l1_md17_nap_f, l1_md17_sal_e, l1_md17_sal_f, l1_md17_tol_e, l1_md17_tol_f, l1_md17_ura_e, l1_md17_ura_f, roc_chemb10, roc_chemb50, roc_chemb100, rmse_pdb, mae_pdb, sd_pdb, pearson_pdb
 
 
@@ -461,79 +480,86 @@ def test_routine(epoch, device):
     y_pred_pdb = []
     
     for idx, graph in enumerate(tqdm(tst_loader)):
-        if graph.dataset[0] in {'md17'}:
-            pos, atoms, nnode, y, dy, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y, graph.dy, graph.subdata[0]
-            y_hat, dy_hat = model(pos, atoms, nnode, task='md17', subname=subname)
+        
+        dataset_label = graph.dataset[0]
+        if isinstance(dataset_label, list):
+            dataset_label = dataset_label[0]
+            
+        if dataset_label in {'md17'}:
+            pos, atoms, nnode, y, dy, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y, graph.dy, graph.subdata[0][0]
+            batch = graph.batch
+            y_hat, dy_hat = model(pos, atoms, nnode, task='md17', subname=subname, batch=batch)
 
             if subname in {'aspirin'}:
-                y_true_md17_asp_e.append(y.item())
-                y_pred_md17_asp_e.append(y_hat.item())
+                y_true_md17_asp_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_asp_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_asp_f.append(dy.detach().numpy())
                 y_pred_md17_asp_f.append(dy_hat.detach().numpy())
             elif subname in {'ethanol'}:
-                y_true_md17_eth_e.append(y.item())
-                y_pred_md17_eth_e.append(y_hat.item())
+                y_true_md17_eth_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_eth_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_eth_f.append(dy.detach().numpy())
                 y_pred_md17_eth_f.append(dy_hat.detach().numpy())
             elif subname in {'malonaldehyde'}:
-                y_true_md17_mal_e.append(y.item())
-                y_pred_md17_mal_e.append(y_hat.item())
+                y_true_md17_mal_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_mal_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_mal_f.append(dy.detach().numpy())
                 y_pred_md17_mal_f.append(dy_hat.detach().numpy())
             elif subname in {'naphthalene'}:
-                y_true_md17_nap_e.append(y.item())
-                y_pred_md17_nap_e.append(y_hat.item())
+                y_true_md17_nap_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_nap_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_nap_f.append(dy.detach().numpy())
                 y_pred_md17_nap_f.append(dy_hat.detach().numpy())
             elif subname in {'salicylic_acid'}:
-                y_true_md17_sal_e.append(y.item())
-                y_pred_md17_sal_e.append(y_hat.item())
+                y_true_md17_sal_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_sal_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_sal_f.append(dy.detach().numpy())
                 y_pred_md17_sal_f.append(dy_hat.detach().numpy())
             elif subname in {'toluene'}:
-                y_true_md17_tol_e.append(y.item())
-                y_pred_md17_tol_e.append(y_hat.item())
+                y_true_md17_tol_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_tol_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_tol_f.append(dy.detach().numpy())
                 y_pred_md17_tol_f.append(dy_hat.detach().numpy())
             elif subname in {'uracil'}:
-                y_true_md17_ura_e.append(y.item())
-                y_pred_md17_ura_e.append(y_hat.item())
+                y_true_md17_ura_e.append(y.squeeze().detach().numpy())
+                y_pred_md17_ura_e.append(y_hat.squeeze().detach().numpy())
                 y_true_md17_ura_f.append(dy.detach().numpy())
                 y_pred_md17_ura_f.append(dy_hat.detach().numpy())
 
-        elif graph.dataset[0] in {'qm9'}:
+        elif dataset_label in {'qm9'}:
             with torch.no_grad():
-                pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y
+                pos, atoms, nnode, y= graph.pos, graph.atom, graph.pos.shape[0], graph.y.T
+                batch = graph.batch
                 #e_id, e_fea, e_we, e_vec = graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
                 #y_hat = model(pos, atoms, nnode, task='qm9', e_id=e_id, e_fea=e_fea, e_we=e_we, e_vec=e_vec)
-                y_hat = model(pos, atoms, nnode, task='qm9')
+                y_hat = model(pos, atoms, nnode, task='qm9', batch=batch)
 
-                y_true_qm9_dip.append(y[0].item())
-                y_pred_qm9_dip.append(y_hat[0].item())
-                y_true_qm9_pol.append(y[1].item())
-                y_pred_qm9_pol.append(y_hat[1].item())
-                y_true_qm9_hom.append(y[2].item())
-                y_pred_qm9_hom.append(y_hat[2].item())
-                y_true_qm9_lum.append(y[3].item())
-                y_pred_qm9_lum.append(y_hat[3].item())
-                y_true_qm9_dlt.append(y[4].item())
-                y_pred_qm9_dlt.append(y_hat[4].item())
-                y_true_qm9_ele.append(y[5].item())
-                y_pred_qm9_ele.append(y_hat[5].item())
-                y_true_qm9_zpv.append(y[6].item())
-                y_pred_qm9_zpv.append(y_hat[6].item())
-                y_true_qm9_eu0.append(y[7].item())
-                y_pred_qm9_eu0.append(y_hat[7].item())
-                y_true_qm9_eu1.append(y[8].item())
-                y_pred_qm9_eu1.append(y_hat[8].item())
-                y_true_qm9_ent.append(y[9].item())
-                y_pred_qm9_ent.append(y_hat[9].item())
-                y_true_qm9_efr.append(y[10].item())
-                y_pred_qm9_efr.append(y_hat[10].item())
-                y_true_qm9_hea.append(y[11].item())
-                y_pred_qm9_hea.append(y_hat[11].item())
+                y_true_qm9_dip.append(y[0].detach().numpy())
+                y_pred_qm9_dip.append(y_hat[0].squeeze().detach().numpy())
+                y_true_qm9_pol.append(y[1].detach().numpy())
+                y_pred_qm9_pol.append(y_hat[1].squeeze().detach().numpy())
+                y_true_qm9_hom.append(y[2].detach().numpy())
+                y_pred_qm9_hom.append(y_hat[2].squeeze().detach().numpy())
+                y_true_qm9_lum.append(y[3].detach().numpy())
+                y_pred_qm9_lum.append(y_hat[3].squeeze().detach().numpy())
+                y_true_qm9_dlt.append(y[4].detach().numpy())
+                y_pred_qm9_dlt.append(y_hat[4].squeeze().detach().numpy())
+                y_true_qm9_ele.append(y[5].detach().numpy())
+                y_pred_qm9_ele.append(y_hat[5].squeeze().detach().numpy())
+                y_true_qm9_zpv.append(y[6].detach().numpy())
+                y_pred_qm9_zpv.append(y_hat[6].squeeze().detach().numpy())
+                y_true_qm9_eu0.append(y[7].detach().numpy())
+                y_pred_qm9_eu0.append(y_hat[7].squeeze().detach().numpy())
+                y_true_qm9_eu1.append(y[8].detach().numpy())
+                y_pred_qm9_eu1.append(y_hat[8].squeeze().detach().numpy())
+                y_true_qm9_ent.append(y[9].detach().numpy())
+                y_pred_qm9_ent.append(y_hat[9].squeeze().detach().numpy())
+                y_true_qm9_efr.append(y[10].detach().numpy())
+                y_pred_qm9_efr.append(y_hat[10].squeeze().detach().numpy())
+                y_true_qm9_hea.append(y[11].detach().numpy())
+                y_pred_qm9_hea.append(y_hat[11].squeeze().detach().numpy())
 
-        elif graph.dataset[0] in {'chemb'}:
+        elif dataset_label in {'chemb'}:
             with torch.no_grad():
                 pos, atoms, nnode, y, subname= graph.pos, graph.atom, graph.pos.shape[0], graph.y.float(), graph.subdata[0]
                 n_fea, e_id, e_fea, e_we, e_vec = graph.x, graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
@@ -551,7 +577,7 @@ def test_routine(epoch, device):
                     y_true_chemb100.append(y.detach().numpy())
                     y_pred_chemb100.append(y_hat.detach().numpy())
 
-        elif graph.dataset[0] in {'pdb'}:
+        elif dataset_label in {'pdb'}:
             with torch.no_grad():
                 n_fea, e_id, e_fea, e_we, e_vec = graph.x, graph.edge_index, graph.edge_attr, graph.edge_weight, graph.edge_vec
                 pos, atoms, nnode, y = graph.pos, graph.atom, graph.pos.shape[0], graph.y
@@ -562,57 +588,57 @@ def test_routine(epoch, device):
         
         
         
-    y_true_qm9_dip = np.array(y_true_qm9_dip)
-    y_pred_qm9_dip = np.array(y_pred_qm9_dip)
-    y_true_qm9_pol = np.array(y_true_qm9_pol)
-    y_pred_qm9_pol = np.array(y_pred_qm9_pol)
-    y_true_qm9_hom = np.array(y_true_qm9_hom)
-    y_pred_qm9_hom = np.array(y_pred_qm9_hom)
-    y_true_qm9_lum = np.array(y_true_qm9_lum)
-    y_pred_qm9_lum = np.array(y_pred_qm9_lum)
-    y_true_qm9_dlt = np.array(y_true_qm9_dlt)
-    y_pred_qm9_dlt = np.array(y_pred_qm9_dlt)
-    y_true_qm9_ele = np.array(y_true_qm9_ele)
-    y_pred_qm9_ele = np.array(y_pred_qm9_ele)
-    y_true_qm9_zpv = np.array(y_true_qm9_zpv)
-    y_pred_qm9_zpv = np.array(y_pred_qm9_zpv)
-    y_true_qm9_eu0 = np.array(y_true_qm9_eu0)
-    y_pred_qm9_eu0 = np.array(y_pred_qm9_eu0)
-    y_true_qm9_eu1 = np.array(y_true_qm9_eu1)
-    y_pred_qm9_eu1 = np.array(y_pred_qm9_eu1)
-    y_true_qm9_ent = np.array(y_true_qm9_ent)
-    y_pred_qm9_ent = np.array(y_pred_qm9_ent)
-    y_true_qm9_efr = np.array(y_true_qm9_efr)
-    y_pred_qm9_efr = np.array(y_pred_qm9_efr)
-    y_true_qm9_hea = np.array(y_true_qm9_hea)
-    y_pred_qm9_hea = np.array(y_pred_qm9_hea)
+    y_true_qm9_dip = np.concatenate(y_true_qm9_dip, axis=0)#np.array(y_true_qm9_dip)
+    y_pred_qm9_dip = np.concatenate(y_pred_qm9_dip, axis=0)#np.array(y_pred_qm9_dip)
+    y_true_qm9_pol = np.concatenate(y_true_qm9_pol, axis=0)#np.array(y_true_qm9_pol)
+    y_pred_qm9_pol = np.concatenate(y_pred_qm9_pol, axis=0)#np.array(y_pred_qm9_pol)
+    y_true_qm9_hom = np.concatenate(y_true_qm9_hom, axis=0)#np.array(y_true_qm9_hom)
+    y_pred_qm9_hom = np.concatenate(y_pred_qm9_hom, axis=0)#np.array(y_pred_qm9_hom)
+    y_true_qm9_lum = np.concatenate(y_true_qm9_lum, axis=0)#np.array(y_true_qm9_lum)
+    y_pred_qm9_lum = np.concatenate(y_pred_qm9_lum, axis=0)#np.array(y_pred_qm9_lum)
+    y_true_qm9_dlt = np.concatenate(y_true_qm9_dlt, axis=0)#np.array(y_true_qm9_dlt)
+    y_pred_qm9_dlt = np.concatenate(y_pred_qm9_dlt, axis=0)#np.array(y_pred_qm9_dlt)
+    y_true_qm9_ele = np.concatenate(y_true_qm9_ele, axis=0)#np.array(y_true_qm9_ele)
+    y_pred_qm9_ele = np.concatenate(y_pred_qm9_ele, axis=0)#np.array(y_pred_qm9_ele)
+    y_true_qm9_zpv = np.concatenate(y_true_qm9_zpv, axis=0)#np.array(y_true_qm9_zpv)
+    y_pred_qm9_zpv = np.concatenate(y_pred_qm9_zpv, axis=0)#np.array(y_pred_qm9_zpv)
+    y_true_qm9_eu0 = np.concatenate(y_true_qm9_eu0, axis=0)#np.array(y_true_qm9_eu0)
+    y_pred_qm9_eu0 = np.concatenate(y_pred_qm9_eu0, axis=0)#np.array(y_pred_qm9_eu0)
+    y_true_qm9_eu1 = np.concatenate(y_true_qm9_eu1, axis=0)#np.array(y_true_qm9_eu1)
+    y_pred_qm9_eu1 = np.concatenate(y_pred_qm9_eu1, axis=0)#np.array(y_pred_qm9_eu1)
+    y_true_qm9_ent = np.concatenate(y_true_qm9_ent, axis=0)#np.array(y_true_qm9_ent)
+    y_pred_qm9_ent = np.concatenate(y_pred_qm9_ent, axis=0)#np.array(y_pred_qm9_ent)
+    y_true_qm9_efr = np.concatenate(y_true_qm9_efr, axis=0)#np.array(y_true_qm9_efr)
+    y_pred_qm9_efr = np.concatenate(y_pred_qm9_efr, axis=0)#np.array(y_pred_qm9_efr)
+    y_true_qm9_hea = np.concatenate(y_true_qm9_hea, axis=0)#np.array(y_true_qm9_hea)
+    y_pred_qm9_hea = np.concatenate(y_pred_qm9_hea, axis=0)#np.array(y_pred_qm9_hea)
     
-    y_true_md17_asp_e = np.array(y_true_md17_asp_e)
-    y_pred_md17_asp_e = np.array(y_pred_md17_asp_e)
+    y_true_md17_asp_e = np.concatenate(y_true_md17_asp_e, axis=0)
+    y_pred_md17_asp_e = np.concatenate(y_pred_md17_asp_e, axis=0)
     y_true_md17_asp_f = np.concatenate(y_true_md17_asp_f, axis=0)
     y_pred_md17_asp_f = np.concatenate(y_pred_md17_asp_f, axis=0)
-    y_true_md17_eth_e = np.array(y_true_md17_eth_e)
-    y_pred_md17_eth_e = np.array(y_pred_md17_eth_e)
+    y_true_md17_eth_e = np.concatenate(y_true_md17_eth_e, axis=0)
+    y_pred_md17_eth_e = np.concatenate(y_pred_md17_eth_e, axis=0)
     y_true_md17_eth_f = np.concatenate(y_true_md17_eth_f, axis=0)
     y_pred_md17_eth_f = np.concatenate(y_pred_md17_eth_f, axis=0)
-    y_true_md17_mal_e = np.array(y_true_md17_mal_e)
-    y_pred_md17_mal_e = np.array(y_pred_md17_mal_e)
+    y_true_md17_mal_e = np.concatenate(y_true_md17_mal_e, axis=0)
+    y_pred_md17_mal_e = np.concatenate(y_pred_md17_mal_e, axis=0)
     y_true_md17_mal_f = np.concatenate(y_true_md17_mal_f, axis=0)
     y_pred_md17_mal_f = np.concatenate(y_pred_md17_mal_f, axis=0)
-    y_true_md17_nap_e = np.array(y_true_md17_nap_e)
-    y_pred_md17_nap_e = np.array(y_pred_md17_nap_e)
+    y_true_md17_nap_e = np.concatenate(y_true_md17_nap_e, axis=0)
+    y_pred_md17_nap_e = np.concatenate(y_pred_md17_nap_e, axis=0)
     y_true_md17_nap_f = np.concatenate(y_true_md17_nap_f, axis=0)
     y_pred_md17_nap_f = np.concatenate(y_pred_md17_nap_f, axis=0)
-    y_true_md17_sal_e = np.array(y_true_md17_sal_e)
-    y_pred_md17_sal_e = np.array(y_pred_md17_sal_e)
+    y_true_md17_sal_e = np.concatenate(y_true_md17_sal_e, axis=0)
+    y_pred_md17_sal_e = np.concatenate(y_pred_md17_sal_e, axis=0)
     y_true_md17_sal_f = np.concatenate(y_true_md17_sal_f, axis=0)
     y_pred_md17_sal_f = np.concatenate(y_pred_md17_sal_f, axis=0)
-    y_true_md17_tol_e = np.array(y_true_md17_tol_e)
-    y_pred_md17_tol_e = np.array(y_pred_md17_tol_e)
+    y_true_md17_tol_e = np.concatenate(y_true_md17_tol_e, axis=0)
+    y_pred_md17_tol_e = np.concatenate(y_pred_md17_tol_e, axis=0)
     y_true_md17_tol_f = np.concatenate(y_true_md17_tol_f, axis=0)
     y_pred_md17_tol_f = np.concatenate(y_pred_md17_tol_f, axis=0)
-    y_true_md17_ura_e = np.array(y_true_md17_ura_e)
-    y_pred_md17_ura_e = np.array(y_pred_md17_ura_e)
+    y_true_md17_ura_e = np.concatenate(y_true_md17_ura_e, axis=0)
+    y_pred_md17_ura_e = np.concatenate(y_pred_md17_ura_e, axis=0)
     y_true_md17_ura_f = np.concatenate(y_true_md17_ura_f, axis=0)
     y_pred_md17_ura_f = np.concatenate(y_pred_md17_ura_f, axis=0)
     
@@ -663,6 +689,7 @@ def test_routine(epoch, device):
     mae_pdb = mae(y_true_pdb, y_pred_pdb)
     sd_pdb = sd(y_true_pdb, y_pred_pdb)
     pearson_pdb = pearson(y_true_pdb, y_pred_pdb)
+    
     return l1_qm9_dip, l1_qm9_pol, l1_qm9_hom, l1_qm9_lum, l1_qm9_dlt, l1_qm9_ele, l1_qm9_zpv, l1_qm9_eu0, l1_qm9_eu1, l1_qm9_ent, l1_qm9_efr, l1_qm9_hea, l1_md17_asp_e, l1_md17_asp_f, l1_md17_eth_e, l1_md17_eth_f, l1_md17_mal_e, l1_md17_mal_f, l1_md17_nap_e, l1_md17_nap_f, l1_md17_sal_e, l1_md17_sal_f, l1_md17_tol_e, l1_md17_tol_f, l1_md17_ura_e, l1_md17_ura_f, roc_chemb10, roc_chemb50, roc_chemb100, rmse_pdb, mae_pdb, sd_pdb, pearson_pdb
 
 
@@ -753,9 +780,9 @@ def get_qm9_prior(dataset):
     return prior_models
         
 def pdb_data():
-    pdb_trn = getattr(datasets, 'PDB')('./data/processed/', "%s_train" % 'pdbbind2016', args.cut_dist)[0:10]
-    pdb_tst = getattr(datasets, 'PDB')('./data/processed/', "%s_test" % 'pdbbind2016', args.cut_dist)[0:10]
-    pdb_val = getattr(datasets, 'PDB')('./data/processed/', "%s_val" % 'pdbbind2016', args.cut_dist)[0:10]
+    pdb_trn = getattr(datasets, 'PDB')('./data/processed/', "%s_train" % 'pdbbind2016', args.cut_dist)[0:1]
+    pdb_tst = getattr(datasets, 'PDB')('./data/processed/', "%s_test" % 'pdbbind2016', args.cut_dist)[0:1]
+    pdb_val = getattr(datasets, 'PDB')('./data/processed/', "%s_val" % 'pdbbind2016', args.cut_dist)[0:1]
     return pdb_trn, pdb_tst, pdb_val
 
 def chemb_data():
@@ -782,7 +809,7 @@ def chemb_data():
     return chemb10_trn, chemb10_val, chemb10_tst, chemb50_trn, chemb50_val, chemb50_tst, chemb100_trn, chemb100_val, chemb100_tst
 
 def qm9_data():
-    qm_data = getattr(datasets, 'QM9')(root='./data/', cut_dist=args.cut_dist)[0:10]
+    qm_data = getattr(datasets, 'QM9')(root='./data/', cut_dist=args.cut_dist)[0:20]
     
     qm9_trn_idx, qm9_val_idx, qm9_tst_idx = random_split(qm_data, frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=args.seed)
     
@@ -792,14 +819,25 @@ def qm9_data():
     
     return qm9_trn, qm9_val, qm9_tst
 
+def qm9_loader(qm9_trn, qm9_val, qm9_tst, batch_size=1024):
+    
+    qm9_trn_dl = DataLoader(dataset=qm9_trn, batch_size=batch_size, shuffle=True)
+    qm9_val_dl = DataLoader(dataset=qm9_val, batch_size=batch_size, shuffle=False)
+    qm9_tst_dl = DataLoader(dataset=qm9_tst, batch_size=batch_size, shuffle=False)
+    qm9_trn = [graph for graph in qm9_trn_dl]
+    qm9_val = [graph for graph in qm9_val_dl]
+    qm9_tst = [graph for graph in qm9_tst_dl]
+    
+    return qm9_trn, qm9_val, qm9_tst
+    
 def md17_data():
-    asp_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='aspirin')[0:10]
-    eth_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='ethanol')[0:10]
-    mal_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='malonaldehyde')[0:10]
-    nap_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='naphthalene')[0:10]
-    sal_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='salicylic_acid')[0:10]
-    tol_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='toluene')[0:10]
-    ura_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='uracil')[0:10]
+    asp_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='aspirin')[0:20]
+    eth_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='ethanol')[0:20]
+    mal_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='malonaldehyde')[0:20]
+    nap_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='naphthalene')[0:20]
+    sal_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='salicylic_acid')[0:20]
+    tol_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='toluene')[0:20]
+    ura_data = getattr(datasets, 'MD17')(root='./data/', cut_dist=args.cut_dist, dataset_arg='uracil')[0:20]
     
     asp_trn_idx, asp_val_idx, asp_tst_idx = random_split(asp_data, frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=args.seed)
     eth_trn_idx, eth_val_idx, eth_tst_idx = random_split(eth_data, frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=args.seed)
@@ -835,6 +873,61 @@ def md17_data():
     
     return asp_trn, asp_val, asp_tst, eth_trn, eth_val, eth_tst, mal_trn, mal_val, mal_tst, nap_trn, nap_val, nap_tst, sal_trn, sal_val, sal_tst, tol_trn, tol_val, tol_tst, ura_trn, ura_val, ura_tst
 
+
+def md17_loader(asp_trn, asp_val, asp_tst, eth_trn, eth_val, eth_tst, mal_trn, mal_val, mal_tst, nap_trn, nap_val, nap_tst, sal_trn, sal_val, sal_tst, tol_trn, tol_val, tol_tst, ura_trn, ura_val, ura_tst, batch_size=1024):
+    
+    asp_trn_dl = DataLoader(dataset=asp_trn, batch_size=batch_size, shuffle=True)
+    asp_val_dl = DataLoader(dataset=asp_val, batch_size=batch_size, shuffle=False)
+    asp_tst_dl = DataLoader(dataset=asp_tst, batch_size=batch_size, shuffle=False)
+    asp_trn = [graph for graph in asp_trn_dl]
+    asp_val = [graph for graph in asp_val_dl]
+    asp_tst = [graph for graph in asp_tst_dl]
+    
+    eth_trn_dl = DataLoader(dataset=eth_trn, batch_size=batch_size, shuffle=True)
+    eth_val_dl = DataLoader(dataset=eth_val, batch_size=batch_size, shuffle=False)
+    eth_tst_dl = DataLoader(dataset=eth_tst, batch_size=batch_size, shuffle=False)
+    eth_trn = [graph for graph in eth_trn_dl]
+    eth_val = [graph for graph in eth_val_dl]
+    eth_tst = [graph for graph in eth_tst_dl]
+    
+    mal_trn_dl = DataLoader(dataset=mal_trn, batch_size=batch_size, shuffle=True)
+    mal_val_dl = DataLoader(dataset=mal_val, batch_size=batch_size, shuffle=False)
+    mal_tst_dl = DataLoader(dataset=mal_tst, batch_size=batch_size, shuffle=False)
+    mal_trn = [graph for graph in mal_trn_dl]
+    mal_val = [graph for graph in mal_val_dl]
+    mal_tst = [graph for graph in mal_tst_dl]
+    
+    nap_trn_dl = DataLoader(dataset=nap_trn, batch_size=batch_size, shuffle=True)
+    nap_val_dl = DataLoader(dataset=nap_val, batch_size=batch_size, shuffle=False)
+    nap_tst_dl = DataLoader(dataset=nap_tst, batch_size=batch_size, shuffle=False)
+    nap_trn = [graph for graph in nap_trn_dl]
+    nap_val = [graph for graph in nap_val_dl]
+    nap_tst = [graph for graph in nap_tst_dl]
+    
+    sal_trn_dl = DataLoader(dataset=sal_trn, batch_size=batch_size, shuffle=True)
+    sal_val_dl = DataLoader(dataset=sal_val, batch_size=batch_size, shuffle=False)
+    sal_tst_dl = DataLoader(dataset=sal_tst, batch_size=batch_size, shuffle=False)
+    sal_trn = [graph for graph in sal_trn_dl]
+    sal_val = [graph for graph in sal_val_dl]
+    sal_tst = [graph for graph in sal_tst_dl]
+    
+    tol_trn_dl = DataLoader(dataset=tol_trn, batch_size=batch_size, shuffle=True)
+    tol_val_dl = DataLoader(dataset=tol_val, batch_size=batch_size, shuffle=False)
+    tol_tst_dl = DataLoader(dataset=tol_tst, batch_size=batch_size, shuffle=False)
+    tol_trn = [graph for graph in tol_trn_dl]
+    tol_val = [graph for graph in tol_val_dl]
+    tol_tst = [graph for graph in tol_tst_dl]
+    
+    ura_trn_dl = DataLoader(dataset=ura_trn, batch_size=batch_size, shuffle=True)
+    ura_val_dl = DataLoader(dataset=ura_val, batch_size=batch_size, shuffle=False)
+    ura_tst_dl = DataLoader(dataset=ura_tst, batch_size=batch_size, shuffle=False)
+    ura_trn = [graph for graph in ura_trn_dl]
+    ura_val = [graph for graph in ura_val_dl]
+    ura_tst = [graph for graph in ura_tst_dl]
+    
+    
+    return asp_trn, asp_val, asp_tst, eth_trn, eth_val, eth_tst, mal_trn, mal_val, mal_tst, nap_trn, nap_val, nap_tst, sal_trn, sal_val, sal_tst, tol_trn, tol_val, tol_tst, ura_trn, ura_val, ura_tst
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     ###########complex dataset
@@ -855,6 +948,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--check', type=int, default=4)
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--batch', type=int, default=1024)
     
     
     ###########optimizer and scheduler
@@ -908,9 +1002,13 @@ if __name__ == '__main__':
                  'tol':(stats(tol_trn)),
                  'ura':(stats(ura_trn))}
     
+    
+    asp_trn, asp_val, asp_tst, eth_trn, eth_val, eth_tst, mal_trn, mal_val, mal_tst, nap_trn, nap_val, nap_tst, sal_trn, sal_val, sal_tst, tol_trn, tol_val, tol_tst, ura_trn, ura_val, ura_tst = md17_loader(asp_trn, asp_val, asp_tst, eth_trn, eth_val, eth_tst, mal_trn, mal_val, mal_tst, nap_trn, nap_val, nap_tst, sal_trn, sal_val, sal_tst, tol_trn, tol_val, tol_tst, ura_trn, ura_val, ura_tst, batch_size=args.batch)
+    
     print('Loading QM9 data...')
     qm9_trn, qm9_val, qm9_tst = qm9_data()
     qm9_prior_models = get_qm9_prior(qm9_trn)   
+    qm9_trn, qm9_val, qm9_tst = qm9_loader(qm9_trn, qm9_val, qm9_tst, batch_size=args.batch)
     
     print('Loading ChEMBL data...')
     chemb10_trn, chemb10_val, chemb10_tst, chemb50_trn, chemb50_val, chemb50_tst, chemb100_trn, chemb100_val, chemb100_tst = chemb_data()
@@ -935,6 +1033,11 @@ if __name__ == '__main__':
     val_dataset = torch.utils.data.ConcatDataset([chemb10_val, chemb50_val, chemb100_val, pdb_val, qm9_val, asp_val, eth_val, mal_val, nap_val, sal_val, tol_val, ura_val])
     
     tst_dataset = torch.utils.data.ConcatDataset([chemb10_tst, chemb50_tst, chemb100_tst, pdb_tst, qm9_tst, asp_tst, eth_tst, mal_tst, nap_tst, sal_tst, tol_tst, ura_tst])
+    
+#     trn_dataset = torch.utils.data.ConcatDataset([qm9_trn])
+#     val_dataset = torch.utils.data.ConcatDataset([qm9_val])
+#     tst_dataset = torch.utils.data.ConcatDataset([qm9_tst])
+    
 
 #     trn_dataset = torch.utils.data.ConcatDataset([chemb100_trn])
     
@@ -942,9 +1045,9 @@ if __name__ == '__main__':
     
 #     tst_dataset = torch.utils.data.ConcatDataset([chemb100_tst])
     
-    trn_loader = loader.DataLoader(trn_dataset, batch_size=1, shuffle=True)
-    val_loader = loader.DataLoader(val_dataset, batch_size=1, shuffle=False)
-    tst_loader = loader.DataLoader(tst_dataset, batch_size=1, shuffle=False)
+    trn_loader = DataLoader(trn_dataset, batch_size=1, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+    tst_loader = DataLoader(tst_dataset, batch_size=1, shuffle=False)
     
     args.pbd_in = pdb_trn[0].x.shape[1]
     args.chemb_in = chemb10_trn[0].x.shape[1]

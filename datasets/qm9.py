@@ -47,7 +47,7 @@ class QM9(QM9_geometric):
         return atomref
 
     def _filter_label(self, batch):
-        batch.y = batch.y[:, :max(qm9_target_dict.keys())+1].T
+        batch.y = batch.y[:, :max(qm9_target_dict.keys())+1]
         return batch
 
     def download(self):

@@ -245,13 +245,15 @@ class GlobalEncoder(nn.Module):
     def reset_parameters(self):
         self.representation_model.reset_parameters()
 
-    def forward(self, z, e_id, e_fea, e_we, e_vec, pos, task):
+    def forward(self, z, e_id, e_fea, e_we, e_vec, pos, task, batch=None):
 
         assert z.dim() == 1 and z.dtype == torch.long
-        batch = torch.zeros_like(z)
+        if batch is None:
+            batch = torch.zeros_like(z)
+        
 
         # run the potentially wrapped representation model
-        x, v, z, pos, batch = self.representation_model(z, e_id, e_fea, e_we, e_vec, pos, task, batch)
+        x, v, z, pos, batch = self.representation_model(z, e_id, e_fea, e_we, e_vec, pos, task, batch=batch)
         return x, v, z, pos, batch
 
         
@@ -291,43 +293,43 @@ class MD17Encoder(nn.Module):
         if subname in {'aspirin'}:
             x = self.asp.pre_reduce(x, v, z, pos, batch)
             x = x * self.asp_sd
-            out = torch.sum(x, dim=0, keepdim=True)#scatter(x, batch, dim=0, reduce='add')
+            out = scatter(x, batch, dim=0, reduce='add')
             out = out + self.asp_mu
             out = self.asp.post_reduce(out)
         elif subname in {'ethanol'}:
             x = self.eth.pre_reduce(x, v, z, pos, batch)
             x = x * self.eth_sd
-            out = torch.sum(x, dim=0, keepdim=True)#scatter(x, batch, dim=0, reduce='add')
+            out = scatter(x, batch, dim=0, reduce='add')
             out = out + self.eth_mu
             out = self.eth.post_reduce(out)
         elif subname in {'malonaldehyde'}:
             x = self.mal.pre_reduce(x, v, z, pos, batch)
             x = x * self.mal_sd
-            out = torch.sum(x, dim=0, keepdim=True)#scatter(x, batch, dim=0, reduce='add')
+            out = scatter(x, batch, dim=0, reduce='add')
             out = out + self.mal_mu
             out = self.mal.post_reduce(out)
         elif subname in {'naphthalene'}:
             x = self.nap.pre_reduce(x, v, z, pos, batch)
             x = x * self.nap_sd
-            out = torch.sum(x, dim=0, keepdim=True)#scatter(x, batch, dim=0, reduce='add')
+            out = scatter(x, batch, dim=0, reduce='add')
             out = out + self.nap_mu
             out = self.nap.post_reduce(out)
         elif subname in {'salicylic_acid'}:
             x = self.sal.pre_reduce(x, v, z, pos, batch)
             x = x * self.sal_sd
-            out = torch.sum(x, dim=0, keepdim=True)#scatter(x, batch, dim=0, reduce='add')
+            out = scatter(x, batch, dim=0, reduce='add')
             out = out + self.sal_mu
             out = self.sal.post_reduce(out)
         elif subname in {'toluene'}:
             x = self.tol.pre_reduce(x, v, z, pos, batch)
             x = x * self.tol_sd
-            out = torch.sum(x, dim=0, keepdim=True)#scatter(x, batch, dim=0, reduce='add')
+            out = scatter(x, batch, dim=0, reduce='add')
             out = out + self.tol_mu
             out = self.tol.post_reduce(out)
         elif subname in {'uracil'}:
             x = self.ura.pre_reduce(x, v, z, pos, batch)
             x = x * self.ura_sd
-            out = torch.sum(x, dim=0, keepdim=True)#scatter(x, batch, dim=0, reduce='add')
+            out = scatter(x, batch, dim=0, reduce='add')
             out = out + self.ura_mu
             out = self.ura.post_reduce(out)
 
@@ -593,11 +595,11 @@ class MTLModel(nn.Module):
         self.complex_ln.reset_parameters()
         #nn.init.xavier_uniform_(self.vec_proj_network.weight)
 
-    def forward(self, pos, atoms, nnode, task, n_fea=None, e_id=None, e_fea=None, e_we=None, e_vec=None, subname=None):
+    def forward(self, pos, atoms, nnode, task, n_fea=None, e_id=None, e_fea=None, e_we=None, e_vec=None, subname=None, batch=None):
         #return self.test_model(atoms, e_id, e_fea, e_we, e_vec, pos, mtl=True)
         if task in {'md17'}:
             pos.requires_grad_(True)
-            x, v, z, pos, batch = self.glob(atoms, e_id, e_fea, e_we, e_vec, pos, task)
+            x, v, z, pos, batch = self.glob(atoms, e_id, e_fea, e_we, e_vec, pos, task, batch=batch)
             energy, dy = self.md17(x, v, z, pos, batch, subname)
             #energy, dy = self.modelI(atoms, e_id, e_fea, e_we, e_vec, pos, mtl)
             #energy, dy = self.pred_network(atom_features.float(), processed_pos, batch)
@@ -605,7 +607,7 @@ class MTLModel(nn.Module):
         
         
         elif task in {'qm9'}:
-            x, v, z, pos, batch = self.glob(atoms, e_id, e_fea, e_we, e_vec, pos, task)
+            x, v, z, pos, batch = self.glob(atoms, e_id, e_fea, e_we, e_vec, pos, task, batch=batch)
             pred = self.qm9(x, v, z, pos, batch)
             #energy, dy = self.modelI(atoms, e_id, e_fea, e_we, e_vec, pos, mtl)
             #energy, dy = self.pred_network(atom_features.float(), processed_pos, batch)
